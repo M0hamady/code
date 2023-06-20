@@ -7,14 +7,16 @@ from .serializers import TodoSerializer, TodoToggleCompleteSerializer
 from todo.models import Todo
 from django.contrib.auth import get_user_model
 from rest_framework.decorators import api_view
-from rest_framework.response import Response
 from rest_framework.parsers import JSONParser
+from rest_framework.response import Response
 from django.db import IntegrityError
 from rest_framework.authtoken.models import Token
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import authenticate
-
+from rest_framework import status
+from django.middleware.csrf import get_token
 # for just display 
+from rest_framework.renderers import JSONRenderer
 
 class TodoList(generics.ListAPIView):
     # ListAPIView requires two mandatory attributes, serializer_class and
@@ -58,41 +60,168 @@ class TodoToggleComplete(generics.UpdateAPIView):
         serializer.save()
 
 User = get_user_model()
+import re
+
 @api_view(['POST'])
 def signup(request):
-    if request.content_type!= 'application/json':
-        return Response({'error': 'Request data is not in JSON format'}, status=400)
+    if request.content_type != 'application/json':
+        response = Response(
+            {'error': 'Request data is not in JSON format', 'message': 'Please send a valid JSON payload.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        response.accepted_renderer = JSONRenderer()
+
+        return response
+
     data = JSONParser().parse(request)
     username = data.get('username')
     password = data.get('password')
 
     if not username or not password:
-        return Response({'error': 'Username and password are required'}, status=400)
+        response = Response(
+            {'error': 'Username and password are required', 'message': 'Please provide a valid username and password.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        response.accepted_renderer = JSONRenderer()
+
+        return response
+
+    if len(username) < 3:
+        print(55555555555555)
+        response = Response(
+            {'error': 'Invalid username', 'message': 'Username must be at least 3 characters long.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        response.accepted_renderer = JSONRenderer()
+
+        return response
+
+    if not re.match(r'^\d{6}$', password):
+        response = Response(
+            {'error': 'Invalid password', 'message': 'Password must contain exactly 6 digits.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        response.accepted_renderer = JSONRenderer()
+
+        return response
+
+    if not re.match(r'^\w+$', username):
+        response = Response(
+            {'error': 'Invalid username', 'message': 'Username can only contain alphanumeric characters and underscores.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        response.accepted_renderer = JSONRenderer()
+
+        return response
+
+    UserModel = get_user_model()
 
     try:
-        user = User.objects.create_user(username=username, password=password)
-        user.save()
-        token = Token.objects.create(user=user)
-        return Response({'token': str(token)}, status=201)
+        user = UserModel.objects.create_user(username=username, password=password)
+        token, _ = Token.objects.get_or_create(user=user)
+
+        response_data = {'token': str(token)}
+        response_data['csrf_token'] = get_token(request)
+
+        response = Response(response_data, status=status.HTTP_201_CREATED)
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        response.accepted_renderer = JSONRenderer()
+
+        return response
+
     except IntegrityError:
-        return Response({'error': 'Username is already taken'}, status=400)
-    
+        response = Response(
+            {'error': 'Username is already taken', 'message': 'The username you provided is already taken.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        response.accepted_renderer = JSONRenderer()
+
+        return response
+
 
 @csrf_exempt
 def login(request):
     if request.method == 'POST':
-        data = JSONParser().parse(request)
-        user = authenticate(
-        request,
-        username=data['username'],
-        password=data['password'])
-    if user is None:
-        return JsonResponse(
-        {'error':'unable to login. check username and password'},
-            status=400)
-    else: # return user token
         try:
-            token = Token.objects.get(user=user)
-        except: # if token not in db, create a new one
-            token = Token.objects.create(user=user)
-        return JsonResponse({'token':str(token)}, status=201)
+            data = JSONParser().parse(request)
+        
+            if len(data) != 2 or 'username' not in data or 'password' not in data:
+                response = Response( {'error': 'Invalid request data','message':'please make sure of your keys and its value'},status=status.HTTP_400_BAD_REQUEST)
+                response.accepted_media_type = 'application/json'
+                response.renderer_context = {}
+                # Set the accepted renderer to JSONRenderer
+                response.accepted_renderer = JSONRenderer()
+                return response
+        except:
+            response = Response( {'error': 'Invalid request data','message':'you have no keys in your request, or your key has no value'},status=status.HTTP_400_BAD_REQUEST)
+            response.accepted_media_type = 'application/json'
+            response.renderer_context = {}
+            # Set the accepted renderer to JSONRenderer
+            response.accepted_renderer = JSONRenderer()
+            return response
+
+        username = data.get('username')
+        password = data.get('password')
+        
+        UserModel = get_user_model()
+
+        try:
+            user = UserModel.objects.get(username=username)
+        except UserModel.DoesNotExist:
+            response = Response( {'error': 'Invalid username ','message':'your username is incorrect'},
+                status=status.HTTP_400_BAD_REQUEST)
+            response.accepted_media_type = 'application/json'
+            response.renderer_context = {}
+            # Set the accepted renderer to JSONRenderer
+            response.accepted_renderer = JSONRenderer()
+
+            return response
+
+        password_valid = user.check_password(password)
+
+        if not password_valid:
+            response = Response( {'error': 'Invalid password or password','message':'your password is incorrect'},
+                status=status.HTTP_400_BAD_REQUEST)
+            response.accepted_media_type = 'application/json'
+            response.renderer_context = {}
+            # Set the accepted renderer to JSONRenderer
+            response.accepted_renderer = JSONRenderer()
+
+            return response
+
+        token, _ = Token.objects.get_or_create(user=user)
+
+        response_data = {'token': str(token)}
+        response_data['csrf_token'] = get_token(request)
+        
+        response = Response(response_data,status=status.HTTP_201_CREATED)
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        # Set the accepted renderer to JSONRenderer
+        response.accepted_renderer = JSONRenderer()
+
+        return response
+        # return Response(response_data, )
+    response = Response( {'error': 'Invalid request method'},
+                status=status.HTTP_405_METHOD_NOT_ALLOWED)
+    response.accepted_media_type = 'application/json'
+    response.renderer_context = {}
+    # Set the accepted renderer to JSONRenderer
+    response.accepted_renderer = JSONRenderer()
+
+    return response
+
+    
