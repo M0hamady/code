@@ -1,8 +1,6 @@
-from django.http import JsonResponse
-from django.shortcuts import render
-
-# Create your views here.
+from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions
+
 from .serializers import TodoSerializer, TodoToggleCompleteSerializer
 from todo.models import Todo
 from django.contrib.auth import get_user_model
@@ -12,11 +10,35 @@ from rest_framework.response import Response
 from django.db import IntegrityError
 from rest_framework.authtoken.models import Token
 from django.views.decorators.csrf import csrf_exempt
-from django.contrib.auth import authenticate
 from rest_framework import status
 from django.middleware.csrf import get_token
 # for just display 
 from rest_framework.renderers import JSONRenderer
+from .models import CustomUser
+from .serializers import CustomUserSerializer
+from rest_framework.views import APIView
+from rest_framework import permissions
+
+
+User = get_user_model()
+
+class CustomUserAPIView(generics.RetrieveUpdateAPIView):
+    serializer_class = CustomUserSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        return get_object_or_404(CustomUser, user=self.request.user)
+
+    def put(self, request, *args, **kwargs):
+        custom_user = self.get_object()
+        serializer = self.serializer_class(custom_user, data=request.data, partial=True)
+        if serializer.is_valid():
+            custom_user.save_profile_pic(request)
+            serializer.save()
+            return Response(serializer.data)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
 
 class TodoList(generics.ListAPIView):
     # ListAPIView requires two mandatory attributes, serializer_class and
@@ -249,4 +271,119 @@ def login(request):
     # Set the accepted renderer to JSONRenderer
     response.accepted_renderer = JSONRenderer()
 
-    return response
+    return 
+from django.contrib.auth.tokens import default_token_generator
+from django.core.mail import send_mail
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+from django.utils.encoding import force_bytes, force_text
+
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+
+# class ResetPasswordView(APIView):
+#     permission_classes = [AllowAny]
+
+#     def post(self, request, *args, **kwargs):
+#         email = request.data.get('email')
+#         username = request.data.get('username')
+
+#         if not email:
+#             return Response({'error': 'Please provide your email address'}, status=status.HTTP_400_BAD_REQUEST)
+
+#         try:
+#             user = User.objects.get(username=username)
+#         except User.DoesNotExist:
+#             return Response({'error': 'User with this email address does not exist'}, status=status.HTTP_404_NOT_FOUND)
+
+#         uid = urlsafe_base64_encode(force_bytes(user.pk))
+#         token = default_token_generator.make_token(user)
+
+#         reset_url = reverse('reset-password-confirm', kwargs={'uidb64': uid, 'token': token})
+#         reset_url = request.build_absolute_uri(reset_url)
+
+#         send_mail(
+#             'Reset your password',
+#             f'Please click on this link to reset your password: {reset_url}',
+#             'urfitness96@gmail.com',
+#             [email],
+#             fail_silently=False,
+#         )
+
+#         return Response({'success': f'Password reset link has been sent to {email}'}, status=status.HTTP_200_OK)
+    
+
+    
+# class ResetPasswordConfirmView(APIView):
+#     permission_classes = [AllowAny]
+
+#     def post(self, request, uidb64, token, *args, **kwargs):
+#         try:
+#             uid = force_text(urlsafe_base64_decode(uidb64))
+#             user = User.objects.get(pk=uid)
+#         except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+#             user = None
+
+#         if user is not None and default_token_generator.check_token(user, token):
+#             new_password = request.data.get('new_password')
+#             confirm_password = request.data.get('confirm_password')
+
+#             if new_password != confirm_password:
+#                 return Response({'error': 'Passwords do not match'}, status=status.HTTP_400_BAD_REQUEST)
+
+#             if len(new_password) < 8:
+#                 return Response({'error': 'Password must be at least 8 characters long'}, status=status.HTTP_400_BAD_REQUEST)
+
+#             user.set_password(new_password)
+#             user.save()
+
+#             return Response({'success': 'Password has been reset'}, status=status.HTTP_200_OK)
+
+#         return Response({'error': 'Invalid reset link'}, status=status.HTTP_400_BAD_REQUEST)
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+
+
+class ChangePasswordView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+
+        # Verify that the old password is correct
+        if not user.check_password(old_password):
+            return Response({'error': 'Old password is incorrect','message': 'Old password is incorrect try again.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not re.match(r'^\d{6}$', new_password):
+            # رسالة خطأ عندما تحتوي كلمة المرور على أكثر أو أقل من 6 أرقام
+            # Error message when the password does not contain exactly 6 digits
+            response = Response(
+                {'error': 'Invalid password', 'message': 'Password must contain exactly 6 digits.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            response.accepted_media_type = 'application/json'
+            response.renderer_context = {}
+            response.accepted_renderer = JSONRenderer()
+
+            return response
+        # Verify that the new password and confirm password match
+        if new_password != confirm_password:
+            return Response({'error': 'Passwords do not match','message': 'Your passwords  is not match try again.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Verify that the new password is not the same as the old password
+        if new_password == old_password:
+            return Response({'error': 'New password must be different from old password','message': 'Old password is same as the new one try change it.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Set the new password and save the user
+        user.set_password(new_password)
+        user.save()
+
+        # Invalidate existing tokens for the user
+        Token.objects.filter(user=user).delete()
+
+        return Response({'success': 'Password has been changed','message': 'Congratulations.'}, status=status.HTTP_200_OK)
